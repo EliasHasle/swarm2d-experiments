@@ -1,0 +1,324 @@
+<html>
+<head>
+	<title>Swarm hunting with common control parameter optimization using simulated annealing</title>
+	<script src="js/lib/three.js"></script>
+	<!--My scripts:-->
+	<script src="js/Swarm.js"></script>
+	<script src="js/Vector2D_operations.js"></script>
+	<script src="js/Steering.js"></script>
+	<script src="js/ParameterOptimizer.js"></script>
+	<script src="js/PID.js"></script>
+</head>
+
+<body>
+<script>
+"use strict";
+
+/*TODO: Maybe drop three.js in favor of pure WebGL.*/
+
+//Shorthands
+var PI = Math.PI, cos = Math.cos, sin = Math.sin, max=Math.max, min=Math.min, abs=Math.abs, random=Math.random, exp=Math.exp, PHI = (1+5**0.5)/2;
+
+//Globals for graphics
+var renderer, scene, camera;
+
+//Globals for simulation
+var targets, agents, numActiveT, hits;
+
+//SIMULATION PARAMETERS:
+let A = 20; //Number of agents
+let T = 500; //Number of targets
+let W = 800; //Space width
+let H = 600; //Space height
+let maxR = 100; //Maximal target orbit radius
+let S = 5; //point radius
+let Cdrag = 0.1;
+let aMaxPreys = 100; //maximal goal acceleration
+let aMaxHunters = 2*aMaxPreys;
+
+//Game loop function
+var animate = (function() {
+	let t_start = 0.001*performance.now();
+	let ot = t_start;
+	return function(t) {
+		t *= 0.001;
+		let dt = (t-ot);// || 0.0000001; //0 not allowed
+		ot = t;
+		
+		if (numActiveT === 0) {
+			console.info("Done after %.2f seconds", 0.001*performance.now()-t_start);
+			return;
+		}
+
+		//MOVE TARGETS
+		targets.update(t, dt);
+
+		//AGENTS
+		agents.update(t, dt);
+		
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	};
+})();
+
+function selectGoal([ax,ay],i,velPID,posPID,agentPos,tPos,tAct,gParams) {
+	let {eInteract, wAvoid, separation} = gParams;
+	let Area = W*H;
+	
+	let [agx,agy] = [0,0];
+	if (numActiveT === 0) return [agx,agy];
+	
+	let sumWeights = 0;
+
+	//Approach targets:
+	for (let j = 0; j < T; j++) {
+		if (!tAct[j]) continue;
+		
+		let [gx,gy] = tPos[j];
+		
+		let r2 = lengthSq(sub([gx,gy],[ax,ay]));
+		if (r2 < S*S) {
+			tAct[j] = 0;
+			velPID.reset();
+			posPID.reset();
+			hits += 1/numActiveT**1.2;//**2; //right? //Performance
+			numActiveT--;
+			if (numActiveT === 0) return [agx,agy];
+			continue;
+		}
+		//let r = r2**0.5;
+		let weight = (1-wAvoid)*exp(-((2*r2/Area)**0.5)*eInteract);
+		if (isNaN(weight)) console.error("Approach weight is NaN!");
+		[agx,agy] = add([agx,agy], scale([gx,gy],weight));
+		sumWeights += weight;
+	}
+	//And avoid other agents, to limit clustering:
+	for (let j = 0; j < A; j++) {
+		if (j===i) continue;
+		let [oax,oay] = agentPos[j];
+		let diff = delta([ax,ay], [oax,oay]);
+		let r2 = lengthSq(diff);
+		let r = r2**0.5;
+		let weight = wAvoid*exp(-((2*r2/Area)**0.5)*eInteract);
+		if (isNaN(weight)) console.error("Avoid weight is NaN!");
+		agx += max(0,min(W,(ax-separation/(diff[0]+Math.sign(diff[0])*0.01))))*weight;
+		agy += max(0,min(H,(ay-separation/(diff[1]+Math.sign(diff[0])*0.01))))*weight;
+		sumWeights += weight;
+	}
+	
+	if (isNaN(sumWeights) || sumWeights===0) console.error("sumWeights is NaN or 0: ", sumWeights);
+	if (isNaN(agx)) console.error("agx is NaN!");
+	if (isNaN(agy)) console.error("agy is NaN!");
+	
+	agx /= sumWeights;
+	agy /= sumWeights;
+	
+	return [agx,agy];
+}
+
+//INITIALISATION
+(function main() {
+	numActiveT = T; //Global that holds number of active targets
+	
+	//Renderer setup
+	document.body.style = "overflow: hidden;";
+	var container = document.createElement("div");
+	Object.assign(container.style, {
+		position: "absolute",
+		top: 0,
+		left: 0,
+		width: W,
+		height: H
+	});
+	document.body.appendChild(container);
+	renderer = new THREE.WebGLRenderer({antialias: true});
+	renderer.setSize(W, H);
+	//renderer.setClearColor(0x000000);
+	container.appendChild(renderer.domElement);
+	
+	//Scene setup:
+	scene = new THREE.Scene();
+	scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+	//Camera setup
+	camera = new THREE.OrthographicCamera(0,W, H, 0, 1, 200);
+	camera.position.set(0, 0, 100);
+	scene.add(camera);
+		
+	//INITIATE TARGETS:
+	
+	//Orbit parameters:
+	//aMax=0.5*r*(2*PI*maxF)**2;
+	//==> maxF = sqrt(2*aMax/r)/(2*PI)
+	let ft = new Float32Array(T);
+	let rt = new Float32Array(T);
+	let ot = new Float32Array(T);
+	for (let i = 0; i < T; i++) {
+		rt[i] = random()*maxR;
+		ft[i] = (2*random()-1)*(2*aMaxPreys/rt[i])**0.5/(2*PI);
+		ot[i] = random()*2*PI;
+	}
+	
+	//Target swarm object
+	targets = new Swarm({
+		number: T,
+		activeColor: 0x00ff00,
+		passiveColor: 0x0000ff,
+		pointRadius: S,
+		initProc: function(pa,va,aa) {
+			for (let i = 0; i < T; i++) {
+				pa[i][0] = random()*(W-2*maxR)+maxR;
+				pa[i][1] = random()*(H-2*maxR)+maxR;
+			}
+		},
+		//Update procedure:
+		updateProc: function(pa, va, aa, t, dt) {
+			for (let i = 0; i < T; i++) {
+				if (!aa[i]) continue;
+				let r = rt[i];
+				let f = ft[i];
+				let o = ot[i];
+				let omega = 2*PI*f;
+				let v = r*omega;
+				let C = v*dt;
+				let a = r*omega**2;
+				let D = 0.5*a*dt**2;
+				pa[i][0] = pa[i][0] - C*sin(o+omega*t) - D*cos(o+omega*t);
+				pa[i][1] = pa[i][1] + C*cos(o+omega*t) -D*sin(o+omega*t);
+			}
+		}
+	});
+	scene.add(targets);
+	
+	//AGENTS:
+	
+	//Optimizers for common PID parameters:
+	/*Note that velOptimizer is updated more often than posOptimizer, and that the ratio between the rates is the golden ratio, to minimize update resonance that could interfere with optimization or affect PID operation. Likewise, the goal optimizer (at least initially) updates less frequently than both the velOptimizer and the posOptimizer, and the initial frequency ratio against the posOptimizer is again the golden ratio. The goal setting optimizer will later adapt its update frequency in response to the frequency of hits, but always in powers of sqrt(2), so it will not easily null out the exceptional irrationality of the golden ratio that ensures minimal resonance.*/
+	
+	let baseUpdatePeriod = /*60**/10*T;
+	let velOptimizer, posOptimizer;
+
+	velOptimizer = new ParameterOptimizer(
+		"Swarm velocity PID",
+		{
+			Kp: {val: 1.5, minval: 0, scale: 0.2, minLR: 0.01},
+			Ki: {val: 0.7, minval: 0, scale: 0.2, minLR: 0.01},
+			Kd: {val: 0.8, minval: 0, scale: 0.2, minLR: 0.01},
+			iDecay: {val: 1, minval: 0.99, maxval: 1, scale: 0.001},
+			dSmoothing: {val: 0, minval: 0, maxval: 0.01, scale: 0.001}
+		},
+		{
+			probWorse: 0.5,
+			minimize: true,
+			threshold: baseUpdatePeriod,
+			pwDecay: 0.99
+		});
+posOptimizer = new ParameterOptimizer(
+		"Swarm position PID",
+		{
+			Kp: {val: 1.8, minval: 0, scale: 0.2, minLR: 0.01},
+			Ki: {val: 1, minval: 0, scale: 0.2, minLR: 0.01},
+			Kd: {val: 0.16, minval: 0, scale: 0.2, minLR: 0.01},
+			iDecay: {val: 1, minval: 0.99, maxval: 1, scale: 0.001},
+			dSmoothing: {val: 0, minval: 0, maxval: 0.01, scale: 0.001}
+		},
+		{
+			probWorse: 0.5,
+			minimize: true,
+			threshold: PHI*baseUpdatePeriod, //Golden ratio
+			pwDecay: 0.984
+	});
+	
+	//Individual PID controllers:
+	let agentVelPID = new Array(A);
+	let agentPosPID = new Array(A);
+	for (let i = 0; i < A; i++) {
+		agentVelPID[i] = new PID(2, velOptimizer);
+		agentPosPID[i] = new PID(2, posOptimizer);
+	}
+	
+	//Optimizer for common goal setting parameters:
+	let goalSettingOptimizer = new ParameterOptimizer(
+		"Goal setting parameters",
+		{
+			eInteract: {val: 11, minval: 4, maxval: 13, scale: 0.9, minLR: 0.05},
+			wAvoid: {val: 0.07, minval: 0.01, maxval: 0.2, scale: 0.05},
+			separation: {val: 1.67, minval: 0.01, maxval: 3, scale: 0.4}
+		},
+		{
+			probWorse: 0.5,
+			minimize: false,
+			threshold: PHI**2*baseUpdatePeriod/A, //Golden ratio
+			pwDecay: 0.97
+	});
+	
+	agents = new Swarm({
+		number: A,
+		activeColor: 0xff0000,
+		passiveColor: 0x00ffff,
+		pointRadius: S,
+		initProc: function(pa, va, aa) {
+			for (let i = 0; i < A; i++) {
+				pa[i][0] = random()*W;
+				pa[i][1] = random()*H;
+			}
+		},
+		//Update procedure:
+		updateProc: function(agentPos, agentVel, ignoreActive, t, dt) {
+			let tPos = targets.positions;
+			let tAct = targets.active;
+			let gParams = goalSettingOptimizer.getParameters();
+						
+			hits = 0;
+			
+			let accs = new Array(A);
+			
+			for (let i = 0; i < A; i++) {
+				let [ax,ay] = agentPos[i];
+				
+				let [agx,agy] = selectGoal([ax,ay],i,agentVelPID[i],agentPosPID[i],agentPos,tPos,tAct, gParams);
+				
+				//Calculate control signal:
+				let [targetVelX, targetVelY] = agentPosPID[i].update([ax,ay], [agx,agy], dt);
+				
+				if (isNaN(targetVelX) || isNaN(targetVelY)) {
+					console.error("%d: Target velocity has NaN!", i);
+					//console.error("\tagentVel[3*i]="+agentVel[3*i]);
+					//console.error("\tagentVel[3*i+1]="+agentVel[3*i+1]);
+					return;
+				}
+				
+				let [avx,avy] = agentVel[i];
+
+				let [accx, accy] = agentVelPID[i].update([avx,avy], [targetVelX, targetVelY], dt);
+				if (abs(accx)===Infinity || abs(accy)===Infinity) {
+					console.error("%d: Infinite control signal!", i);
+					return;
+				}
+				if (isNaN(accx) || isNaN(accy)) {
+					console.error("%d: Control is NaN!", i);
+					console.error("\taccx="+accx);
+					console.error("\taccy="+accy);
+					return;
+				}
+				
+				//Clamp controls:
+				([accx,accy] = clampLength([accx,accy],aMaxHunters));
+				
+				//Update physical agent state:
+				//Speed damping. I think this is a bit wrong, actually, but it suits the purpose.
+				([accx, accy] = add([accx,accy], calculateDrag([avx,avy], Cdrag)));
+				accs[i] = [accx,accy];
+			}
+			agents.applyAccelerations(accs, dt);
+			
+			goalSettingOptimizer.accumulate(hits);
+		}
+	});
+	scene.add(agents);
+	
+	requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>

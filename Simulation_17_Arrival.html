@@ -1,0 +1,138 @@
+<html>
+<head>
+	<title>Arrival simulation</title>
+	<!--Graphics library:-->
+	<script src="js/lib/three.js"></script>
+	 <!--MY SCRIPTS:-->
+	<script src="js/Vector2D_operations.js"></script>
+	<script src="js/Steering.js"></script>
+	<script src="js/Swarm.js"></script>
+
+</head>
+
+<body>
+<script>
+"use strict";
+
+/*TODO: Maybe drop three.js in favor of pure WebGL.*/
+
+//Shorthands
+var PI = Math.PI, cos = Math.cos, sin = Math.sin, max=Math.max, min=Math.min, abs=Math.abs, random=Math.random, exp=Math.exp;
+
+//Globals for graphics
+var renderer, scene, camera;
+
+//Globals for simulation
+var targets, agents;
+
+//Game loop function
+var animate = (function() {
+	let t_start = 0.001*performance.now();
+	let ot = t_start;
+	return function(t) {
+		t *= 0.001;
+		let dt = (t-ot);// || 0.0000001; //0 not allowed
+		ot = t;
+		
+		//MOVE TARGETS
+		targets.update(t, dt);
+
+		//AGENTS
+		agents.update(t, dt);
+		
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	};
+})();
+
+//INITIALISATION
+(function main() {
+	//SIMULATION PARAMETERS:
+	let A = 1; //Number of agents
+	let T = 1; //Number of targets
+	let W = 800; //Space width
+	let H = 600; //Space height
+	let maxR = 100; //padding (was for orbit radius in another simulation)
+	let S = 5; //point radius
+	
+	let aMax = 40;
+	
+	//Renderer setup
+	document.body.style = "overflow: hidden;";
+	var container = document.createElement("div");
+	Object.assign(container.style, {
+		position: "absolute",
+		top: 0,
+		left: 0,
+		width: W,
+		height: H
+	});
+	document.body.appendChild(container);
+	renderer = new THREE.WebGLRenderer({antialias: true});
+	renderer.setSize(W, H);
+	//renderer.setClearColor(0x000000);
+	container.appendChild(renderer.domElement);
+	
+	//Scene setup:
+	scene = new THREE.Scene();
+	scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+	//Camera setup
+	camera = new THREE.OrthographicCamera(0,W, H, 0, 1, 200);
+	camera.position.set(0, 0, 100);
+	scene.add(camera);
+		
+	//INITIATE TARGETS:
+	targets = new Swarm({
+		number: T,
+		activeColor: 0x00ff00,
+		passiveColor: 0x0000ff,
+		pointRadius: S,
+		initProc: function(pa,va,aa) {
+			for (let i = 0; i < T; i++) {
+				pa[i][0] = random()*(W-2*maxR)+maxR;
+				pa[i][1] = random()*(H-2*maxR)+maxR;
+			}
+		},
+		//Update procedure:
+		//updateProc: function(pa, va, aa, t, dt) {}
+	});
+	scene.add(targets);
+	
+	//INITIATE AGENTS:
+	agents = new Swarm({
+		number: A,
+		activeColor: 0xff0000,
+		passiveColor: 0x00ffff,
+		pointRadius: S,
+		initProc: function(pa,va,aa) {
+			for (let i = 0; i < A; i++) {
+				pa[i][0] = random()*W;
+				pa[i][1] = random()*H;
+				va[i][0] = 0.1*W*(2*random()-1);
+				va[i][1] = 0.1*H*(2*random()-1);
+			}
+		},
+		//Update procedure:
+		updateProc: function(agentPos, agentVel, ignoreActive, t, dt) {
+			let [gx,gy] = targets.positions[0];
+			
+			let agentAcc = [];
+			for (let i = 0; i < A; i++) {
+				let [ax,ay] = agentPos[i];
+				
+				let [avx,avy] = agentVel[i];
+				
+				agentAcc.push(arrival([ax,ay],[avx,avy],[gx,gy],aMax));
+			}
+			
+			agents.applyAccelerations(agentAcc, dt);
+		}
+	});
+	scene.add(agents);
+	
+	requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>

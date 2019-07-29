@@ -1,0 +1,212 @@
+<html>
+<head>
+	<title>Swarm hunting</title>
+	<script src="js/lib/three.js"></script>
+	<script src="js/Swarm.js"></script> <!--My script-->
+	<script src="js/Vector2D_operations.js"></script>
+	<script src="js/Steering.js"></script>
+</head>
+
+<body>
+<script>
+"use strict";
+
+/*TODO: Maybe drop three.js in favor of pure WebGL.*/
+
+//Shorthands
+var PI = Math.PI, cos = Math.cos, sin = Math.sin, max=Math.max, min=Math.min, abs=Math.abs, random=Math.random, exp=Math.exp, PHI = (1+5**0.5)/2;
+
+//Globals for graphics
+var renderer, scene, camera;
+
+//Globals for simulation
+var targets, agents, numActiveT;
+
+//Game loop function
+var animate = (function() {
+	let t_start = 0.001*performance.now();
+	let ot = t_start;
+	return function(t) {
+		t *= 0.001;
+		let dt = (t-ot);// || 0.0000001; //0 not allowed
+		ot = t;
+		
+		if (numActiveT === 0) {
+			console.info("Done after %.2f seconds", 0.001*performance.now()-t_start);
+			return;
+		}
+
+		//MOVE TARGETS
+		targets.update(t, dt);
+
+		//AGENTS
+		agents.update(t, dt);
+		
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	};
+})();
+
+//INITIALISATION
+(function main() {
+	//SIMULATION PARAMETERS:
+	let A = 20; //Number of agents
+	let T = 500; //Number of targets
+	let W = 800; //Space width
+	let H = 600; //Space height
+	let maxR = 100; //Maximal target orbit radius
+	let S = 5; //point radius
+	let aMaxPreys = 100; //maximal goal acceleration
+	let aMaxHunters = 2*aMaxPreys;
+	let Cdrag = 0.1; //Drag on hunters (not very fair, since their control does not account for drag)
+
+	numActiveT = T; //Global that holds number of active targets
+	
+	//Renderer setup
+	document.body.style = "overflow: hidden;";
+	var container = document.createElement("div");
+	Object.assign(container.style, {
+		position: "absolute",
+		top: 0,
+		left: 0,
+		width: W,
+		height: H
+	});
+	document.body.appendChild(container);
+	renderer = new THREE.WebGLRenderer({antialias: true});
+	renderer.setSize(W, H);
+	//renderer.setClearColor(0x000000);
+	container.appendChild(renderer.domElement);
+	
+	//Scene setup:
+	scene = new THREE.Scene();
+	scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+	//Camera setup
+	camera = new THREE.OrthographicCamera(0,W, H, 0, 1, 200);
+	camera.position.set(0, 0, 100);
+	scene.add(camera);
+		
+	//INITIATE TARGETS:
+	
+	//Orbit parameters:
+	//aMaxPreys=0.5*r*(2*PI*maxF)**2;
+	//==> maxF = sqrt(2*aMaxPreys/r)/(2*PI)
+	let ft = new Float32Array(T);
+	let rt = new Float32Array(T);
+	let ot = new Float32Array(T);
+	for (let i = 0; i < T; i++) {
+		rt[i] = random()*maxR;
+		ft[i] = (2*random()-1)*(2*aMaxPreys/rt[i])**0.5/(2*PI);
+		ot[i] = random()*2*PI;
+	}
+	
+	//Target swarm object
+	targets = new Swarm({
+		number: T,
+		activeColor: 0x00ff00,
+		passiveColor: 0x0000ff,
+		pointRadius: S,
+		initProc: function(pa,va,aa) {
+			for (let i = 0; i < T; i++) {
+				pa[i][0] = random()*(W-2*maxR)+maxR;
+				pa[i][1] = random()*(H-2*maxR)+maxR;
+			}
+		},
+		//Update procedure:
+		updateProc: function(pa, va, aa, t, dt) {
+			if (numActiveT === 0) return [0, 0];
+		
+			let aPos = agents.positions;
+			
+			let criticalDistanceSq = 4*S**2;
+			
+			for (let i = 0; i < T; i++) {
+				if (!aa[i]) continue;
+				
+				let p = pa[i];
+				let threat = nearestPoint(p, aPos);
+				if (lengthSq(delta(p,threat)) < criticalDistanceSq) {
+					aa[i] = 0;
+					numActiveT--;
+					if (numActiveT === 0) return [0,0];
+					continue;
+				}
+				
+				let r = rt[i];
+				let f = ft[i];
+				let o = ot[i];
+				let omega = 2*PI*f;
+				let v = r*omega;
+				let C = v*dt;
+				let a = r*omega**2;
+				let D = 0.5*a*dt**2;
+				
+				p[0] = p[0] - C*sin(o+omega*t) - D*cos(o+omega*t);
+				p[1] = p[1] + C*cos(o+omega*t) -D*sin(o+omega*t);
+			}
+		}
+	});
+	scene.add(targets);
+	
+	//INITIATE AGENTS:	
+	agents = new Swarm({
+		number: A,
+		activeColor: 0xff0000,
+		passiveColor: 0x00ffff,
+		pointRadius: S,
+		initProc: function(pa, va, ignoreActive) {
+			for (let i = 0; i < A; i++) {
+				let p = pa[i];
+				p[0] = random()*W;
+				p[1] = random()*H;
+			}
+		},
+		//Update procedure:
+		updateProc: function(agentPos, agentVel, ignoreActive, t, dt) {
+			let tPos = targets.positions;
+			let tVel = targets.velocities;
+			let tAct = targets.active;
+			
+			//Filter out dead targets:
+			let tpfi = [];
+			let tvfi = [];
+			for (let i = 0; i < T; i++) {
+				if (tAct[i] === 1) {
+					tpfi.push(tPos[i]);
+					tvfi.push(tVel[i]);
+				}
+			}
+			
+			let Area = W*H;
+			
+			let accs = new Array(agents.number);
+			
+			//Iterate agents:
+			for (let i = 0; i < A; i++) {
+				let p = agentPos[i];
+				let v = agentVel[i];
+				
+				//Find nearest active goal:
+				let j = nearestPointIndex(p, tpfi);
+				if (j === null) {
+					accs[i] = [0,0];
+					continue;
+				}
+				let pu = pursueAcc(p,v,tpfi[j],tvfi[j], aMaxHunters);
+				let sep = separation(p,i,agentPos,aMaxHunters,10*S);
+				let ad = averageVector([pu,sep], [0.1,0.9]);
+				let drag = calculateDrag(v, Cdrag);
+				let acc = add(ad,drag);
+				accs[i] = acc;
+			}
+			agents.applyAccelerations(accs, dt);
+		}
+	});
+	scene.add(agents);
+	
+	requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>

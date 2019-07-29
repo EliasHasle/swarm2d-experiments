@@ -1,0 +1,226 @@
+<html>
+<head>
+	<title>Simple PSO path finding</title>
+	<!--Graphics library (not mine)-->
+	<script src="js/lib/three.js"></script>
+	<!--GUI library (not mine)-->
+	<script src="js/lib/dat.gui.js"></script>
+	<!--My scripts:-->
+	<script src="js/Swarm.js"></script>
+	<script src="js/Vector2D_operations.js"></script>
+	<script src="js/PSO.js"></script>
+	<script src="js/MonoPlot2D.js"></script>
+</head>
+
+<body>
+<script>
+"use strict";
+
+/*TODO: Maybe drop three.js in favor of pure WebGL.*/
+
+//Shorthands
+var PI = Math.PI, cos = Math.cos, sin = Math.sin, max=Math.max, min=Math.min, abs=Math.abs, random=Math.random, exp=Math.exp;
+
+//Globals for graphics
+var renderer, scene, camera;
+
+//Globals for simulation
+var robot, target, obstacles, pso;
+
+//Game loop function
+var animate = (function() {
+	let t_start = 0.001*performance.now();
+	let ot = t_start;
+	return function(t) {
+		t *= 0.001;
+		let dt = (t-ot);// || 0.0000001; //0 not allowed
+		ot = t;
+		
+		robot.update(t, dt);
+		
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	};
+})();
+
+//INITIALISATION
+(function main() {
+	let pars = {
+		ignoreObstacles: false,
+		//take distance between robot and particle
+		//into account. This currently breaks obstacle 
+		//avoidance, for unknown reasons:
+		useLRP: false,
+		psoIterations: 15,
+		psoParticles: 50
+	}	
+
+	//Renderer setup
+	document.body.style = "overflow: hidden;";
+	var container = document.createElement("div");
+	Object.assign(container.style, {
+		position: "absolute",
+		top: 0,
+		left: 0,
+		width: "100vw",
+		height: "100vh"
+	});
+	document.body.appendChild(container);
+	let W = container.clientWidth;
+	let H = container.clientHeight;
+	W = Math.min(W,H);
+	H = W;
+	console.log("W=",W," H=",H);
+	Object.assign(container.style, {
+		width: W,
+		height: H
+	});
+	renderer = new THREE.WebGLRenderer({antialias: true});
+	renderer.setSize(W, H);
+	//renderer.setClearColor(0x000000);
+	container.appendChild(renderer.domElement);
+	
+	//Scene setup:
+	scene = new THREE.Scene();
+	scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+	//Camera setup
+	camera = new THREE.OrthographicCamera(0, W, H, 0, 1, 200);
+	camera.position.set(0, 0, 100);
+	scene.add(camera);
+	
+	//Define obstacles:
+	let oRadius = 30;
+	obstacles = new Swarm({
+		number: 9,
+		pointRadius: oRadius,
+		initProc: function(pa,va,aa) {
+			pa[0].set([0.4*W,0.6*H]);
+			pa[1].set([0.9*W,0.8*H]);
+			pa[2].set([0.5*W,0.5*H]);
+			pa[3].set([0.55*W,0.4*H]);
+			pa[4].set([0.25*W,0.35*H]);
+			pa[5].set([0.6*W,0.55*H]);
+			pa[6].set([0.5*W,0.3*H]);
+			pa[7].set([0.4*W,0.2*H]);
+			pa[8].set([0.3*W,0.3*H]);
+		}
+	});
+	scene.add(obstacles);
+	
+	//Create the target:
+	let tx = 0.9*W;
+	let ty = 0.9*H;
+	target = new Swarm({
+		number: 1,
+		pointRadius: 10,
+		activeColor: 0x00ff00,
+		initProc: function(pa,va,aa) {
+			pa[0][0] = tx;
+			pa[0][1] = ty;
+		}
+	});
+	scene.add(target);
+	
+	//Create the PSO pso:					//Filter
+	pso = new PSO2D(["x","y"], [0,0], [W,H],
+		undefined, //filterFun will be defined later
+		undefined, //costFun will be defined later
+		0.95, 0.02, 0.03, 100, 1, false,0.001);
+	scene.add(pso);
+
+	//Create robot:
+	let rRadius = 10;
+	robot = new Swarm({
+		number: 1,
+		pointRadius: rRadius,
+		activeColor: 0xff0000,
+		initProc: function(pa,va,aa) {
+			pa[0][0] = 0.1*W;
+			pa[0][1] = 0.1*H;
+		},
+		updateProc: function(pa,va,aa,t,dt) {
+			let [rx,ry] = pa[0];
+			let obs = obstacles.positions;
+			
+			//Update filter function to filter out all particles 
+			//that are occluded by obstacles:
+			pso.filterFun = function([px,py]) {
+				if (pars.ignoreObstacles) return true;
+				
+				let dist = length(sub([px,py],[rx,ry]));
+				let collDistance = oRadius + rRadius;
+				//For each obstacle position:
+				for (let o of obs) {
+					//Trim if far away:
+					if (length(sub(o,[rx,ry])) > dist) continue;
+					//Check end point:
+					if (length(sub(o,[px,py])) < collDistance) return false;
+					//Project obstacle on line segment:
+					let proj = projectPositionToLineSegment(o,[rx,ry],[px,py]);
+					if (proj === null) continue;
+					if (proj.distance < collDistance) return false;
+				}
+				return true;
+			}
+			//console.log("Robot position: [",rx,",",ry,"]");
+			let psoRange = 4*(oRadius+rRadius);
+			let miX=Math.max(0,Math.min(W,rx)-psoRange);
+			let maX=Math.min(W,Math.max(0,rx)+psoRange)
+			let miY=Math.max(0,Math.min(H,ry)-psoRange);
+			let maY=Math.min(H,Math.max(0,ry)+psoRange);
+			pso.mins = [miX, miY];
+			pso.maxes = [maX, maY];
+			
+			//Update cost function to account for new robot position:
+			pso.costFun = function([px,py]) {
+				//Distance from robot to particle:
+				let LRP = pars.useLRP ? length(sub([px,py],[rx,ry])) : 0;
+				//Distance from particle to target:
+				let LPT = length(sub([tx,ty],[px,py]));
+				
+				return LRP + LPT;
+			},
+			
+			//Set computed particles and draw range from GUI:
+			pso.activeParticles = pars.psoParticles;
+			
+			//Reset pso before running it at new position:
+			pso.reset();
+			for (let i = 0; i < pars.psoIterations; i++) {
+				//Decaying inertia over the search, as suggested
+				//in the assignment text:
+				pso.inertia = 1-i/pars.psoIterations;
+				pso.update(t,dt);
+			}
+			
+			//Move robot in direction of best particle position:
+			let gb = pso.global_best;
+			let [dx,dy] = [gb[0]-rx, gb[1]-ry];
+			let dist = length([dx,dy]);
+			let [vx,vy] = scale([dx,dy],dist > 1 ? 60/dist : 60*dist);
+			//va[0].set([vx,vy]); //not important now
+			pa[0].set(add([rx,ry],scale([vx,vy], dt)));
+		}
+	});
+	scene.add(robot);
+	
+	let gui = new dat.GUI();
+	gui.add(pars, "ignoreObstacles").onChange(function(value) {
+		obstacles.activeParticles = value ? 0 : obstacles.number;
+	});
+	gui.add(pars, "useLRP");
+	gui.add(pars, "psoIterations", 1,100);
+	gui.add(pars, "psoParticles", 1, 100);
+	//gui.add(pso, "inertia", 0.8,1);
+	gui.add(pso, "cognitive", 0,0.05);
+	gui.add(pso, "social", 0,0.05);
+	gui.add({restart: function() {
+		robot.initProc(robot.positions);
+	}}, "restart");
+	
+	requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>
