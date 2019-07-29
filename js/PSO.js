@@ -2,18 +2,14 @@
 
 //Helper function for making a sample from (possibly infinite) bounds mi, ma.
 function randomPosition(mi,ma) {
-	let infMin = false;
-	if (mi === -Infinity)
-		infMin = true;
-	let infMax = false;
-	if (ma === Infinity)
-		infMax = true;
+	let infMin = mi === -Infinity;
+	let infMax = ma === Infinity;
 
 	let U = Math.random();
 	//Uniform distribution
 	if (!infMin && !infMax) return mi+(ma-mi)*U;
 	let L = Math.log(U);
-	//Normal distribution (Box-Muller, check formula)
+	//Normal distribution (Box-Muller)
 	if (infMin && infMax) {
 		let V = Math.random();
 		return (-2*L)**0.5*Math.cos(2*Math.PI*V);
@@ -22,10 +18,10 @@ function randomPosition(mi,ma) {
 	return (infMin ? (ma+L) : (mi-L));
 }
 
-function randomVelocity(pmi,pma) {
+function randomVelocity(pmi,pma,mul=0.5) {
 	let p = randomPosition(pmi,pma);
 	let s = Math.random() < 0.5 ? -1 : 1;
-	return 0.5*p*s;
+	return mul*p*s;
 }
 
 //Perform a full PSO within a single function call:
@@ -45,7 +41,7 @@ function PSO(parNames, parMins, parMaxes, filter, costFun, inertiaFun=function(i
 			let mi = parMins[k];
 			let ma = parMaxes[k]
 			positions[j][k] = randomPosition(mi,ma);
-			velosicites[j][k] = randomVelocity(mi,ma);
+			velocities[j][k] = randomVelocity(mi,ma);
 		}
 		if (!filter(positions[j])) {
 			j--;
@@ -107,13 +103,14 @@ function PSO2D(names, mins, maxes, filterFun, costFun, inertia, cognitive, socia
 	this.social = social;
 	this.verbose = verbose;
 	this.epsilon = epsilon; //zero threshold for respawning
+	
 	let scope = this;
 	Swarm.call(this, {
 		number,
 		pointRadius,
 		activeColor: 0x00ff00,
 		passiveColor: 0xff0000,
-		initProc: function(pa,va,aa,ud) {
+		initProc: function(pa,va,ca,ud) {
 			scope.iteration = 0;
 			scope.global_best = new Array(2).fill(0);
 			scope.global_best_value = Infinity;
@@ -122,7 +119,10 @@ function PSO2D(names, mins, maxes, filterFun, costFun, inertia, cognitive, socia
 			for (let j = 0; j < number; j++) {
 				scope.local_bests[j] = new Array(2).fill(0);
 				for (let k = 0; k < 2; k++) {
-					pa[j][k] = randomPosition(scope.mins[k],scope.maxes[k]);
+					let mi = scope.mins[k];
+					let ma = scope.maxes[k];
+					pa[j][k] = randomPosition(mi,ma);
+					va[j][k] = randomVelocity(mi,ma);
 				}
 				if (scope.filterFun && !scope.filterFun(pa[j])) {
 					j--;
@@ -131,46 +131,45 @@ function PSO2D(names, mins, maxes, filterFun, costFun, inertia, cognitive, socia
 			}
 			if (scope.verbose) console.log("Done with initialization.");
 		},
-		updateProc: function(pa,va,aa,t,dt) {
-			for (let j = 0; j < number; j++) {
+		updateProc: function(pa,va,ca,t,dt) {
+			//console.log("Debug: Iteration ", scope.iteration);
+			for (let j = 0; j < this.activeParticles; j++) {
 				let po = pa[j];
 				let vo = va[j];
 				let pn = new Float32Array(2);
 				let vn = new Float32Array(2);
-				while (true) {
-					let allZero = true;
-					for (let k = 0; k < 2; k++) {
-						let r1 = Math.random();
-						let r2 = Math.random();
-						vn[k] = scope.inertia*vo[k] 
-								+ r1*scope.cognitive*(scope.local_bests[j][k]-po[k]) 
-								+ r2*scope.social*(scope.global_best[k]-po[k]);
-						if (Math.abs(vn[k]) > scope.epsilon) 
-							allZero = false;
-						pn[k] = po[k] + vn[k];
-						//Clamp position:
-						pn[k] = Math.min(scope.maxes[k],Math.max(scope.mins[k],pn[k]));
-						if (Math.abs(scope.global_best[k]-pn[k]) > scope.epsilon) allZero = false;
-					}
-					//Prevent idle particles:
-					if (allZero) {
-						//console.log("Respawning particle.");
-						scope.local_best_values[j] = Infinity;
-						for (let k = 0; k < 2; k++) {
-							let mi = scope.mins[k];
-							let ma = scope.maxes[k];
-							pn[k] = randomPosition(mi,ma);
-							vn[k] = randomVelocity(mi,ma);
-						}
-					}
-					if (!scope.filterFun || scope.filterFun(pn)) break;
+				let allZero = true;
+				for (let k = 0; k < 2; k++) {
+					let r1 = Math.random();
+					let r2 = Math.random();
+					vn[k] = scope.inertia*vo[k] 
+							+ r1*scope.cognitive*(scope.local_bests[j][k]-po[k]) 
+							+ r2*scope.social*(scope.global_best[k]-po[k]);
+					if (Math.abs(vn[k]) > scope.epsilon) 
+						allZero = false;
+					pn[k] = po[k] + vn[k];
+					//Clamp position:
+					pn[k] = Math.min(scope.maxes[k],Math.max(scope.mins[k],pn[k]));
+					//allZero remains true only if velocity is approaching zero near the current global_best:
+					if (Math.abs(scope.global_best[k]-pn[k]) > scope.epsilon) allZero = false;
 				}
-				//console.log("Broke out of while (true).");
+				//Prevent idle particles, and also prevent particles that fail the filter:
+				while (allZero || (scope.filterFun && !scope.filterFun(pn))) {
+					allZero = false;
+					//console.log("Respawning particle.");
+					scope.local_best_values[j] = Infinity;
+					for (let k = 0; k < 2; k++) {
+						let mi = scope.mins[k];
+						let ma = scope.maxes[k];
+						pn[k] = randomPosition(mi,ma);
+						vn[k] = randomVelocity(mi,ma);
+					}
+				}
 				pa[j].set(pn);
 				va[j].set(vn);
-				let L = length(vn); //vector length
-				aa[j] = 1/(0.5+0.5*L);
-				let evaluation = costFun(pn);
+				let L = length(vn);
+				ca[j] = 1/(0.5+0.5*L);
+				let evaluation = scope.costFun(pn);
 				if (evaluation < scope.local_best_values[j]) {
 						scope.local_bests[j] = pn;
 						scope.local_best_values[j] = evaluation;
@@ -184,6 +183,12 @@ function PSO2D(names, mins, maxes, filterFun, costFun, inertia, cognitive, socia
 			scope.iteration++;
 		}
 	});
+	
+	Object.defineProperty(this, "activeParticles", {
+		get: function() {return this.geometry.drawRange.count;},
+		set: function(value) {this.geometry.drawRange.count = value;}
+	});
+	this.activeParticles = number;
 }
 PSO2D.prototype = Object.create(Swarm.prototype);
 Object.assign(PSO2D.prototype, {
@@ -211,4 +216,5 @@ Object.assign(PSO2D.prototype, {
 				continue;
 			}
 		}
-	}});
+	}
+});
