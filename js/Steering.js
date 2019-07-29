@@ -1,8 +1,8 @@
 "use strict";
 /*
-A collection of basic steering behaviors that can be combined.
+A collection of basic steering behaviors that can be combined. Not all are great implementations.
 
-Depends on vector_2D_operations.js
+Depends on Vector2D_operations.js
 
 TODO: Maybe make the functions that output directions or velocities output accelerations instead, with the help of a few extra parameters and helper functions.
 */
@@ -40,7 +40,8 @@ function clampSteering(afd,ald, afMax,alMax) {
 	return scale([afd,ald], m);
 }
 
-/*Acceleration is found from difference between desired and current velocity. aMax defaults to 1, which will give an acceleration direction.*/
+/*Acceleration is found (naively) from difference between desired and current velocity.
+aMax defaults to 1, which will give an acceleration direction.*/
 function velToAcc(v, vd, aMax=1) {
 	if (vd===null) return null;
 	if (equalVec(v,vd)) return [0,0];
@@ -59,6 +60,7 @@ function accSteer(v, vd, afMax, alMax) {
 }
 
 //Functions that return a desired direction in world space:
+//Naive seek:
 function seek(a, g) {
 	return normalize(delta(a,g));
 }
@@ -85,6 +87,7 @@ function evade(p, h,hv,  c, cutoff=Infinity) {
 	return negate(pursue(p, h,hv,  c));
 }
 
+//Not great...
 function follow_path(p,v, vertices,edges, maxR, vdMax,aMax, backward=false, T=0.5) {
 	let futurePos = add(p, scale(v,T));
 	let near = nearestLinePoint(futurePos, vertices,edges);
@@ -104,6 +107,7 @@ function follow_path(p,v, vertices,edges, maxR, vdMax,aMax, backward=false, T=0.
 	//return seekAcc(p,v,near.toPoint,aMax);
 }
 
+//Not great...
 function follow_wall(p,v, vertices,edges, offset, aMax, T=Infinity) {
 	let cutoff = (length(v)||5)*T;
 	let intersection = intersectNearest(p,normalize(v), vertices,edges);
@@ -162,23 +166,8 @@ and more properly minimizes the time to impact.
 	and
 	t = (-vr +-sqrt(vr**2+2*r*ar))/ar
 	
-	//Below is a working fixed-point approach (not theoretically proven)
+	//Below code is a working fixed-point approach (not theoretically proven)
 	//Can the equations be solved analytically?
-	at = -2*vt/t
-	ar^2 + at^2 = aMax^2
-	t = (-vr +-sqrt(vr**2+2*r*ar))/ar (select smallest positive t)
-	
-	ar^2 + (2*vt/t)^2 = aMax^2 ==> ar = sqrt(aMax**2 -(2*vt/t)**2)
-	t = (-vr +-sqrt(vr**2+2*r*ar))/ar = (-vr +-sqrt(vr**2+2*r*sqrt(aMax**2 -(2*vt/t)**2)))/sqrt(aMax**2 -(2*vt/t)**2)
-	
-	Solve this for t? Not easy (but could use Newton's method)...:
-	t = (-vr +-sqrt(vr**2+2*r*sqrt(aMax**2 -(2*vt/t)**2)))/sqrt(aMax**2 -(2*vt/t)**2)
-	
-	0 = (-vr +-sqrt(vr**2+2*r*sqrt(aMax**2 -(2*vt/t)**2)))/sqrt(aMax**2 -(2*vt/t)**2) - t
-	Minimize
-	((-vr +-sqrt(vr**2+2*r*sqrt(aMax**2 -(2*vt/t)**2)))/sqrt(aMax**2 -(2*vt/t)**2) - t)**2
-	instead, requiring t > 0. This is differentiable. I need separate branches for +-srt.
-	
 	*/
 function seekAcc(pa,va, pg, aMax) {
 	let d = delta(pa,pg);
@@ -193,14 +182,6 @@ function seekAcc(pa,va, pg, aMax) {
 	let vr = dot(va,dir);
 	let vt = dot(va, rotate(dir, 0.5*Math.PI));
 	let theta = angle(dir);
-
-	//Special cases that rarely apply,
-	//and may be handled incorrectly?
-	// if (vr === 0) {
-		// return rotate([0,aMax],theta); //right?
-	// } else if (vt === 0) {
-		// return rotate([aMax,0],theta); //right?
-	// }
 	
 	//Trusting to find a fixed point by iteration
 	//(this decision must be verified mathematically):
@@ -224,6 +205,7 @@ function seekAcc(pa,va, pg, aMax) {
 	return rotate([ar,at], theta);
 }
 
+//Pursue based on better seek
 function pursueAcc(pa,va, pt,vt, aMax) {
 	return seekAcc(pa, sub(va,vt), pt, aMax);
 }
@@ -508,7 +490,10 @@ function prioritize(behaviors) {
 	return null;
 }
 
-/*Aim to arrive just behind the leader, while avoiding to get in the leader's way. The description says to aim for arriving behind the leader, and conditionally evade laterally wrt. the leader's direction. This formulation is a bit different.*/
+/*Aim to arrive just behind the leader, while avoiding to get in the leader's way.
+The description says to aim for arriving behind the leader,
+and conditionally evade laterally wrt. the leader's direction.
+This formulation is a bit different. And does not work very well...*/
 //Returns an acceleration
 function follow_leader(p,pv,pIndex, l,lv, ps, aMax, lag=20) {
 	let eSpeed = length(pv)+length(lv);
