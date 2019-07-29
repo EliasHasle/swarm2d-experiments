@@ -63,8 +63,10 @@ function Swarm({number, activeColor, passiveColor, pointRadius, initProc, update
 		this.velocities[i] = velocities.subarray(3*i,3*i+2);
 	}
 	this.userData = {};
-	if (typeof initProc !== "undefined")
+	if (typeof initProc !== "undefined") {
 		initProc(this.positions, this.velocities, this.active, this.userData);
+		this.initProc = initProc;
+	}
 	
 	posAttr.needsUpdate = true;
 	activeAttr.needsUpdate = true;
