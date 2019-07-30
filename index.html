@@ -3,24 +3,26 @@
 <html>
 <head>
 	<title>Swarm experiments</title>
+	<link rel="stylesheet" type="text/css" href="style.css" />
 </head>
 
 <body>
 <p><a href="..">..Back to EliasHasle.github.io.</a></p>
+<article>
 <h1>Swarm experiments</h1>
 <p>Here is a small collection of experiments that I made in a Swarm Intelligence course in Ålesund.</p>
 
-<ul>
-	<li><a href="Behavior_Arrival.html">Arrival behavior</a></li>
-	<li><a href="Behavior_Seek_comparison.html">Two different Seek behavior implementations</a> The red one is smarter. Refresh the page multiple times to get new random scenarios.</li>
-	<li><a href="Pack_hunting_Non-PID.html">Pack hunting with single target per hunter and optimized pursue implementation</a> - Suffers a bit from conflicts due to the (necessary) separation behavior.</li>
-	<li><a href="Pack_hunting_experimental_PID_averaged_target_online-optimization.html">Experimental pack hunting using combined behaviors, weighted target points, PID controllers and online optimization</a> - It suffers a bit from PID being more suited for docking than pursuing.</li>
-	<li><a href="PSO_Visual_with_sliders.html">Simple PSO searching in a 2D plane</a>, with interactive modification of PSO parameters</li>
-	<li><a href="PSO_Visual_with_parameters_oscillating_in_dissonance.html">PSO dissonance</a> - Experiment with PSO parameters swiping over their range at frequencies related by the golden ratio, and respawning particles upon convergence to global best known</li>
-	<li><a href="PSO_Path.html">PSO_Path</a> - A simplistic short-sighted path planning using PSO, with interactive controls</li>
-	<li><a href="PSO_Path_optimized.html">PSO_Path_optimized</<> - A variant of the above that uses the last PSO state in previous position as starting point in the new position and runs only a single iteration per decision, compensating with a more particles and larger space (still only selects a direction without building a search tree)</li>
-</ul>
-
+<dl class="experiments" id="swarmexperiments">
+	<dt><a href="Behavior_Arrival.html">Arrival behavior</a></dt> <dd><br /></dd>
+	<dt><a href="Behavior_Seek_comparison.html">Two different Seek behavior implementations</a></dt> <dd>The red one is smarter. Refresh the page multiple times to get new random scenarios.</dd>
+	<dt><a href="Pack_hunting_Non-PID.html">Pack hunting 1</a></dt> <dd>With single target per hunter and optimized pursue implementation. Suffers a bit from conflicts due to the (necessary) separation behavior.</dd>
+	<dt><a href="Pack_hunting_experimental_PID_averaged_target_online-optimization.html">Pack hunting 2</a></dt> <dd>Experimental, using combined behaviors, weighted target points, PID controllers and online optimization. It suffers a bit from PID being more suited for docking than pursuing.</dd>
+	<dt><a href="PSO_Visual_with_sliders.html">Simple PSO searching in a 2D plane</a></dt> <dd>With interactive modification of PSO parameters</dd>
+	<dt><a href="PSO_Visual_with_parameters_oscillating_in_dissonance.html">PSO dissonance</a></dt> <dd>Experiment with PSO parameters swiping over their range at frequencies related by the golden ratio, and respawning particles upon convergence to global best known.</dd>
+	<dt><a href="PSO_Path.html">PSO_Path</a></dt> <dd>A simplistic short-sighted path planning using PSO, with interactive controls</dd>
+	<dt><a href="PSO_Path_optimized.html">PSO_Path_optimized</a></dt> <dd>A variant of the above that uses the last PSO state in previous position as starting point in the new position and runs only a single iteration per decision, compensating with a more particles and larger space (still only selects a direction without building a search tree)</dd>
+</dl>
+</article>
 </body>
 
 </html>
