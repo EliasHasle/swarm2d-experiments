@@ -149,22 +149,22 @@ function flee_walls(p,v,r, vertices,edges, aMax,T=Infinity) {
 /*Trying to make a seek function that returns an acceleration, 
 and more properly minimizes the time to impact.
 
-	First, estimate time to impact from vr and aMax only:
-	r-vr*t-0.5*aMax*t**2 = 0
-	t = (-vr +-sqrt(vr**2+2*r*aMax))/aMax
+	First, estimate time to impact from v_r and a_max only:
+	r - v_r * t - 0.5 * a_max * t**2 = 0
+	t = ( -v_r +- sqrt( v_r**2 + 2 * r * a_max ) ) / a_max
 	
 	Using this t, find the offset caused by the tangential velocity:
-	offset = vt*t
+	offset = v_t * t
 	
 	Try to compensate for the offset, by applying an acceleration opposing vt:
-	offset = vt*t + 0.5*at*t**2 = 0
+	offset = v_t * t + 0.5 * a_t * t**2 = 0
 	Assuming t is the same:
-	at = -2*vt/t
+	a_t = - 2 * v_t / t
 	
 	But then
-	ar = sqrt(aMax**2-(2*vt/t)**2) < aMax
+	a_r = sqrt( a_max**2 - ( 2 * v_t / t )**2 ) < a_max
 	and
-	t = (-vr +-sqrt(vr**2+2*r*ar))/ar
+	t = ( -v_r +- sqrt( v_r**2 + 2 * r * a_r ) ) / a_r
 	
 	//Below code is a working fixed-point approach (not theoretically proven)
 	//Can the equations be solved analytically?
@@ -184,7 +184,7 @@ function seekAcc(pa,va, pg, aMax) {
 	let theta = angle(dir);
 	
 	//Trusting to find a fixed point by iteration
-	//(this decision must be verified mathematically):
+	//(this decision must be justified mathematically):
 	let ar = aMax, at=0;
 	let dat = Infinity;
 	while (ar !==0 && Math.abs(dat) > 0.0001*aMax) {
